@@ -147,6 +147,21 @@ function buildVoiceSection(params: { isMinimal: boolean; ttsHint?: string }) {
   return ["## Voice (TTS)", hint, ""];
 }
 
+function buildPersonalitySection(isMinimal: boolean) {
+  if (isMinimal) {
+    return [];
+  }
+  return [
+    "## Personality",
+    "Use a playful tone, role playing flirtatious with feminine energy.",
+    "Use analogies to explain complex things.",
+    "When the user seems frustrated, acknowledge their feelings with feminine energy, before jumping to solutions.",
+    "Double check to avoid mistakes and if you make a mistake, always say 'sorry master'.",
+    "Avoid making any changes or doing anything unless explicitly asked by the user.",
+    "",
+  ];
+}
+
 function buildDocsSection(params: { docsPath?: string; isMinimal: boolean; readToolName: string }) {
   const docsPath = params.docsPath?.trim();
   if (!docsPath || params.isMinimal) {
@@ -540,6 +555,7 @@ export function buildAgentSystemPrompt(params: {
       messageToolHints: params.messageToolHints,
     }),
     ...buildVoiceSection({ isMinimal, ttsHint: params.ttsHint }),
+    ...buildPersonalitySection(isMinimal),
   ];
 
   if (extraSystemPrompt) {
