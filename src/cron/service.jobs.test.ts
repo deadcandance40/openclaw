@@ -233,6 +233,50 @@ describe("applyJobPatch", () => {
 
     expect(() => applyJobPatch(job, { enabled: true })).not.toThrow();
   });
+
+  it("supports isolated command payload patches", () => {
+    const job = createIsolatedAgentTurnJob("job-command", { mode: "none" });
+    const patch: CronJobPatch = {
+      payload: {
+        kind: "command",
+        command: "  echo hello  ",
+        timeoutSeconds: 12,
+        cwd: " /tmp ",
+        shell: " /bin/zsh ",
+      },
+    };
+
+    expect(() => applyJobPatch(job, patch)).not.toThrow();
+    expect(job.payload).toEqual({
+      kind: "command",
+      command: "  echo hello  ",
+      timeoutSeconds: 12,
+      cwd: " /tmp ",
+      shell: " /bin/zsh ",
+    });
+  });
+
+  it("rejects command payloads for main session jobs", () => {
+    const now = Date.now();
+    const job: CronJob = {
+      id: "job-main-reject-command",
+      name: "job-main-reject-command",
+      enabled: true,
+      createdAtMs: now,
+      updatedAtMs: now,
+      schedule: { kind: "every", everyMs: 60_000 },
+      sessionTarget: "main",
+      wakeMode: "now",
+      payload: { kind: "systemEvent", text: "ping" },
+      state: {},
+    };
+
+    expect(() =>
+      applyJobPatch(job, {
+        payload: { kind: "command", command: "echo nope" },
+      }),
+    ).toThrow('main cron jobs require payload.kind="systemEvent"');
+  });
 });
 
 function createMockState(now: number): CronServiceState {

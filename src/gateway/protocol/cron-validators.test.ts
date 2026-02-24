@@ -26,6 +26,18 @@ describe("cron protocol validators", () => {
     expect(validateCronAddParams(withoutWakeMode)).toBe(false);
   });
 
+  it("accepts isolated command payload add params", () => {
+    expect(
+      validateCronAddParams({
+        name: "cmd-job",
+        schedule: { kind: "every", everyMs: 60_000 },
+        sessionTarget: "isolated",
+        wakeMode: "now",
+        payload: { kind: "command", command: "echo hi", timeoutSeconds: 30 },
+      }),
+    ).toBe(true);
+  });
+
   it("accepts update params for id and jobId selectors", () => {
     expect(validateCronUpdateParams({ id: "job-1", patch: { enabled: false } })).toBe(true);
     expect(validateCronUpdateParams({ jobId: "job-2", patch: { enabled: true } })).toBe(true);

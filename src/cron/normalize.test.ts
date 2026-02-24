@@ -372,6 +372,19 @@ describe("normalizeCronJobCreate", () => {
     expect(delivery.mode).toBeUndefined();
     expect(delivery.to).toBe("123");
   });
+
+  it("infers command payload kind/session target from command-only payloads", () => {
+    const normalized = normalizeCronJobCreate({
+      name: "command-only",
+      schedule: { kind: "every", everyMs: 60_000 },
+      payload: { command: "  echo hello  " },
+    }) as unknown as Record<string, unknown>;
+
+    const payload = normalized.payload as Record<string, unknown>;
+    expect(payload.kind).toBe("command");
+    expect(payload.command).toBe("echo hello");
+    expect(normalized.sessionTarget).toBe("isolated");
+  });
 });
 
 describe("normalizeCronJobPatch", () => {
@@ -420,5 +433,21 @@ describe("normalizeCronJobPatch", () => {
 
     const schedule = normalized.schedule as Record<string, unknown>;
     expect(schedule.staggerMs).toBe(30_000);
+  });
+
+  it("infers command payload kind for command-only payload patches", () => {
+    const normalized = normalizeCronJobPatch({
+      payload: {
+        command: "  echo patch  ",
+        cwd: " /tmp ",
+        shell: " /bin/zsh ",
+      },
+    }) as unknown as Record<string, unknown>;
+
+    const payload = normalized.payload as Record<string, unknown>;
+    expect(payload.kind).toBe("command");
+    expect(payload.command).toBe("echo patch");
+    expect(payload.cwd).toBe("/tmp");
+    expect(payload.shell).toBe("/bin/zsh");
   });
 });

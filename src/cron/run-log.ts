@@ -19,6 +19,11 @@ export type CronRunLogEntry = {
   runAtMs?: number;
   durationMs?: number;
   nextRunAtMs?: number;
+  command?: string;
+  exitCode?: number;
+  timedOut?: boolean;
+  stdoutPreview?: string;
+  stderrPreview?: string;
 } & CronRunTelemetry;
 
 export type CronRunLogSortDir = "asc" | "desc";
@@ -263,6 +268,17 @@ function parseAllRunLogEntries(raw: string, opts?: { jobId?: string }): CronRunL
         model: typeof obj.model === "string" && obj.model.trim() ? obj.model : undefined,
         provider:
           typeof obj.provider === "string" && obj.provider.trim() ? obj.provider : undefined,
+        command: typeof obj.command === "string" && obj.command.trim() ? obj.command : undefined,
+        exitCode: typeof obj.exitCode === "number" ? obj.exitCode : undefined,
+        timedOut: typeof obj.timedOut === "boolean" ? obj.timedOut : undefined,
+        stdoutPreview:
+          typeof obj.stdoutPreview === "string" && obj.stdoutPreview.trim()
+            ? obj.stdoutPreview
+            : undefined,
+        stderrPreview:
+          typeof obj.stderrPreview === "string" && obj.stderrPreview.trim()
+            ? obj.stderrPreview
+            : undefined,
         usage: usage
           ? {
               input_tokens: typeof usage.input_tokens === "number" ? usage.input_tokens : undefined,

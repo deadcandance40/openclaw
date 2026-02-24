@@ -19,6 +19,19 @@ function cronAgentTurnPayloadSchema(params: { message: TSchema }) {
   );
 }
 
+function cronCommandPayloadSchema(params: { command: TSchema }) {
+  return Type.Object(
+    {
+      kind: Type.Literal("command"),
+      command: params.command,
+      timeoutSeconds: Type.Optional(Type.Integer({ minimum: 0 })),
+      cwd: Type.Optional(Type.String()),
+      shell: Type.Optional(Type.String()),
+    },
+    { additionalProperties: false },
+  );
+}
+
 const CronSessionTargetSchema = Type.Union([Type.Literal("main"), Type.Literal("isolated")]);
 const CronWakeModeSchema = Type.Union([Type.Literal("next-heartbeat"), Type.Literal("now")]);
 const CronRunStatusSchema = Type.Union([
@@ -123,6 +136,7 @@ export const CronPayloadSchema = Type.Union([
     { additionalProperties: false },
   ),
   cronAgentTurnPayloadSchema({ message: NonEmptyString }),
+  cronCommandPayloadSchema({ command: NonEmptyString }),
 ]);
 
 export const CronPayloadPatchSchema = Type.Union([
@@ -134,6 +148,7 @@ export const CronPayloadPatchSchema = Type.Union([
     { additionalProperties: false },
   ),
   cronAgentTurnPayloadSchema({ message: Type.Optional(NonEmptyString) }),
+  cronCommandPayloadSchema({ command: Type.Optional(NonEmptyString) }),
 ]);
 
 const CronDeliverySharedProperties = {
@@ -325,6 +340,11 @@ export const CronRunLogEntrySchema = Type.Object(
       ),
     ),
     jobName: Type.Optional(Type.String()),
+    command: Type.Optional(Type.String()),
+    exitCode: Type.Optional(Type.Integer()),
+    timedOut: Type.Optional(Type.Boolean()),
+    stdoutPreview: Type.Optional(Type.String()),
+    stderrPreview: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );

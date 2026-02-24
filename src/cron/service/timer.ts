@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
 import { DEFAULT_AGENT_ID } from "../../routing/session-key.js";
 import { resolveCronDeliveryPlan } from "../delivery.js";
@@ -36,6 +37,8 @@ const MIN_REFIRE_GAP_MS = 2_000;
  * from wedging the entire cron lane.
  */
 export const DEFAULT_JOB_TIMEOUT_MS = 10 * 60_000; // 10 minutes
+const MAX_COMMAND_OUTPUT_CHARS = 20_000;
+const COMMAND_OUTPUT_PREVIEW_CHARS = 2_000;
 
 type TimedCronRunOutcome = CronRunOutcome &
   CronRunTelemetry & {
@@ -46,8 +49,11 @@ type TimedCronRunOutcome = CronRunOutcome &
   };
 
 function resolveCronJobTimeoutMs(job: CronJob): number | undefined {
+  if (job.payload.kind !== "agentTurn") {
+    return undefined;
+  }
   const configuredTimeoutMs =
-    job.payload.kind === "agentTurn" && typeof job.payload.timeoutSeconds === "number"
+    typeof job.payload.timeoutSeconds === "number"
       ? Math.floor(job.payload.timeoutSeconds * 1_000)
       : undefined;
   if (configuredTimeoutMs === undefined) {
@@ -126,6 +132,188 @@ function resolveDeliveryStatus(params: { job: CronJob; delivered?: boolean }): C
     return "not-delivered";
   }
   return resolveCronDeliveryPlan(params.job).requested ? "unknown" : "not-requested";
+}
+
+function appendCappedText(existing: string, chunk: Buffer | string, maxChars: number) {
+  if (existing.length >= maxChars) {
+    return existing;
+  }
+  const text = typeof chunk === "string" ? chunk : chunk.toString("utf-8");
+  if (!text) {
+    return existing;
+  }
+  const room = Math.max(0, maxChars - existing.length);
+  return existing + text.slice(0, room);
+}
+
+function buildOutputPreview(output: string) {
+  const trimmed = output.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.length <= COMMAND_OUTPUT_PREVIEW_CHARS) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, COMMAND_OUTPUT_PREVIEW_CHARS).trimEnd()}…`;
+}
+
+function pickCommandSummary(params: {
+  command: string;
+  status: CronRunStatus;
+  stdoutPreview?: string;
+  stderrPreview?: string;
+}) {
+  const preferred =
+    params.status === "error"
+      ? params.stderrPreview || params.stdoutPreview
+      : params.stdoutPreview || params.stderrPreview;
+  if (preferred) {
+    const firstLine = preferred
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (firstLine) {
+      return firstLine;
+    }
+  }
+  return params.status === "ok"
+    ? `command succeeded: ${params.command}`
+    : `command failed: ${params.command}`;
+}
+
+async function runCommandJob(
+  state: CronServiceState,
+  job: CronJob,
+): Promise<CronRunOutcome & CronRunTelemetry> {
+  if (job.payload.kind !== "command") {
+    return { status: "skipped", error: "invalid command payload" };
+  }
+
+  const command = job.payload.command.trim();
+  if (!command) {
+    return { status: "skipped", error: 'command job requires a non-empty "command" field' };
+  }
+
+  const cwd =
+    typeof job.payload.cwd === "string" && job.payload.cwd.trim() ? job.payload.cwd.trim() : null;
+  const shell =
+    typeof job.payload.shell === "string" && job.payload.shell.trim()
+      ? job.payload.shell.trim()
+      : true;
+  const timeoutMsRaw =
+    typeof job.payload.timeoutSeconds === "number"
+      ? Math.floor(job.payload.timeoutSeconds * 1_000)
+      : DEFAULT_JOB_TIMEOUT_MS;
+  const timeoutMs = timeoutMsRaw <= 0 ? undefined : timeoutMsRaw;
+
+  let stdoutRaw = "";
+  let stderrRaw = "";
+  let timedOut = false;
+  let exitCode: number | undefined;
+  let timeoutId: NodeJS.Timeout | undefined;
+  let hardKillId: NodeJS.Timeout | undefined;
+
+  const result = await new Promise<CronRunOutcome & CronRunTelemetry>((resolve) => {
+    let settled = false;
+    const finish = (value: CronRunOutcome & CronRunTelemetry) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      if (hardKillId) {
+        clearTimeout(hardKillId);
+      }
+      resolve(value);
+    };
+
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(command, {
+        cwd: cwd ?? undefined,
+        shell,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      finish({
+        status: "error",
+        error: `failed to spawn command: ${String(err)}`,
+        summary: `failed to spawn command: ${command}`,
+        command,
+      });
+      return;
+    }
+
+    child.stdout?.on("data", (chunk) => {
+      stdoutRaw = appendCappedText(stdoutRaw, chunk, MAX_COMMAND_OUTPUT_CHARS);
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderrRaw = appendCappedText(stderrRaw, chunk, MAX_COMMAND_OUTPUT_CHARS);
+    });
+
+    child.on("error", (err) => {
+      const stdoutPreview = buildOutputPreview(stdoutRaw);
+      const stderrPreview = buildOutputPreview(stderrRaw);
+      finish({
+        status: "error",
+        error: `command execution error: ${String(err)}`,
+        summary: pickCommandSummary({
+          command,
+          status: "error",
+          stdoutPreview,
+          stderrPreview,
+        }),
+        command,
+        timedOut,
+        stdoutPreview,
+        stderrPreview,
+      });
+    });
+
+    child.on("close", (code, signal) => {
+      exitCode = typeof code === "number" ? code : undefined;
+      const stdoutPreview = buildOutputPreview(stdoutRaw);
+      const stderrPreview = buildOutputPreview(stderrRaw);
+      const status: CronRunStatus = !timedOut && code === 0 ? "ok" : "error";
+      const error = timedOut
+        ? "command timed out"
+        : code === 0
+          ? undefined
+          : typeof code === "number"
+            ? `command exited with code ${code}`
+            : signal
+              ? `command terminated by signal ${signal}`
+              : "command failed";
+      finish({
+        status,
+        error,
+        summary: pickCommandSummary({ command, status, stdoutPreview, stderrPreview }),
+        command,
+        exitCode,
+        timedOut,
+        stdoutPreview,
+        stderrPreview,
+      });
+    });
+
+    if (typeof timeoutMs === "number") {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        state.deps.log.warn({ jobId: job.id, timeoutMs }, "cron: command timed out; terminating");
+        child.kill("SIGTERM");
+        hardKillId = setTimeout(() => {
+          if (!child.killed) {
+            child.kill("SIGKILL");
+          }
+        }, 2_000);
+      }, timeoutMs);
+    }
+  });
+
+  return result;
 }
 
 /**
@@ -712,8 +900,15 @@ export async function executeJobCore(
     }
   }
 
+  if (job.payload.kind === "command") {
+    return await runCommandJob(state, job);
+  }
+
   if (job.payload.kind !== "agentTurn") {
-    return { status: "skipped", error: "isolated job requires payload.kind=agentTurn" };
+    return {
+      status: "skipped",
+      error: "isolated job requires payload.kind=agentTurn or payload.kind=command",
+    };
   }
   if (abortSignal?.aborted) {
     return resolveAbortError();
@@ -843,6 +1038,11 @@ function emitJobFinished(
     model: result.model,
     provider: result.provider,
     usage: result.usage,
+    command: result.command,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    stdoutPreview: result.stdoutPreview,
+    stderrPreview: result.stderrPreview,
   });
 }
 

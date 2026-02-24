@@ -415,6 +415,11 @@ export async function run(state: CronServiceState, id: string, mode?: "due" | "f
       model: coreResult.model,
       provider: coreResult.provider,
       usage: coreResult.usage,
+      command: coreResult.command,
+      exitCode: coreResult.exitCode,
+      timedOut: coreResult.timedOut,
+      stdoutPreview: coreResult.stdoutPreview,
+      stderrPreview: coreResult.stderrPreview,
     });
 
     if (shouldDelete && state.store) {

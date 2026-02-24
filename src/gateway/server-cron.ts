@@ -314,6 +314,11 @@ export function buildGatewayCronService(params: {
             model: evt.model,
             provider: evt.provider,
             usage: evt.usage,
+            command: evt.command,
+            exitCode: evt.exitCode,
+            timedOut: evt.timedOut,
+            stdoutPreview: evt.stdoutPreview,
+            stderrPreview: evt.stderrPreview,
           },
           runLogPrune,
         ).catch((err) => {

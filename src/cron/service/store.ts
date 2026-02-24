@@ -86,18 +86,27 @@ function normalizePayloadKind(payload: Record<string, unknown>) {
     payload.kind = "systemEvent";
     return true;
   }
+  if (raw === "command") {
+    payload.kind = "command";
+    return true;
+  }
   return false;
 }
 
 function inferPayloadIfMissing(raw: Record<string, unknown>) {
   const message = typeof raw.message === "string" ? raw.message.trim() : "";
   const text = typeof raw.text === "string" ? raw.text.trim() : "";
+  const command = typeof raw.command === "string" ? raw.command.trim() : "";
   if (message) {
     raw.payload = { kind: "agentTurn", message };
     return true;
   }
   if (text) {
     raw.payload = { kind: "systemEvent", text };
+    return true;
+  }
+  if (command) {
+    raw.payload = { kind: "command", command };
     return true;
   }
   return false;
@@ -302,6 +311,9 @@ export async function ensureLoaded(
           mutated = true;
         } else if (typeof payloadRecord.text === "string" && payloadRecord.text.trim()) {
           payloadRecord.kind = "systemEvent";
+          mutated = true;
+        } else if (typeof payloadRecord.command === "string" && payloadRecord.command.trim()) {
+          payloadRecord.kind = "command";
           mutated = true;
         }
       }
