@@ -231,6 +231,8 @@ async function runCommandJob(
 
     let child: ReturnType<typeof spawn>;
     try {
+      // SECURITY: command is user-configured in jobs.json and executes with gateway privileges.
+      // shell is enabled by default to support shell features like pipes, redirects, etc.
       child = spawn(command, {
         cwd: cwd ?? undefined,
         shell,
